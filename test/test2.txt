@@ -1,0 +1,114 @@
+; when we declare an identifier like so:
+; (pk id)
+; we actually declare an identifier of type 'undefined'.
+; in this context, we can probably guess that it references an attribute.
+; indeed, we can probably put a rule like this:
+; attr_ref: IDENTIFIER
+; |         "(" "attr" IDENTIFIER ")"
+; (this allow the syntax (pk id) or (pk (attr id)))
+; anyway, any undefined identifier is subtly declared, so that they
+; can be searched later when declaring new indentifiers.
+; there are global identifiers. these are for ENTITIES, ASSOCS and GERARCHIES.
+; then, there are private identifiers: those for attributes. all these
+; groups also define where identifiers could be declared.
+
+(entity utente
+    (pk id)
+    (attr id)
+    (attr nome)
+    (attr cognome)
+    (attr password)
+    (attr email)
+    (attr eta)
+    (attr telefono))
+
+(entity piano
+    (attr id)
+    (pk id))
+(entity piano-gratuito)
+(entity piano-mensile)
+(entity piano-annuale)
+
+(gerarchy gerarchy-piano
+    (type total exclusive)
+    (parent piano)
+    (child piano-gratuito)
+    (child piano-mensile)
+    (child piano-annuale))
+
+(entity stipulazione
+    (attr data-inizio)
+    (fk (attr ) ())
+
+(association (name assoc-stipulazione-utente)
+    (between utente stipulazione)
+    (card utente 0 n)
+    (card stipulation 1 1))
+
+(association (name assoc-stipulazione-piano)
+    (between stipulazione piano)
+    (card stipulazione 0-n)
+    (card piano 1-1))
+
+(entity (name videogioco)
+    (attr id pk)
+    (attr titolo)
+    (attr genere)
+    (attr anno)
+    (attr azienda)
+    (attr produttore))
+
+(entity (name videogioco-multiplayer))
+
+(gerarchy (name gerarchy-vg-vgmult)
+    (type subset)
+    (parent videogioco)
+    (child videogioco-multiplayer))
+
+(entity copia-videogioco
+    (attr id))
+
+(association copia
+    (between videogioco copia-videogioco)
+    (card videogioco 0-n)
+    (card copia-videogioco 1-1))
+
+(fk (attr id copia-videogioco) ; this is an attribute reference.
+    (association copia))       ; this is an association reference.
+
+(association (name acquisto)
+    (between utente copia-videogioco)
+    (card utente 0-n)
+    (card copia-videogioco 0-1))
+
+(entity (name statistiche)
+    (attr ore)
+    (attr preferito)
+    (fk (association assoc-utente-statistiche)
+        (association assoc-statistiche-videogioco)))
+
+(association (name assoc-utente-statistiche)
+    (between utente statistiche)
+    (card utente 0-1)
+    (card statistiche 0-1))
+
+(association (name assoc-statistiche-videogioco)
+    (between statistiche videogioco)
+    (card statistiche 1-1)
+    (card videogioco 0-n))
+
+(entity (name sessione)
+    (attr id pk)
+    (attr data)
+    (attr tempo-trascorso))
+
+(association (name partecipazione)
+    (between utente sessione)
+    (card utente 0-n)
+    (card sessione 2-n))
+
+(association (name scelta)
+    (between videogioco sessione)
+    (card videogioco 0-n)
+    (card sessione 1-1))
+

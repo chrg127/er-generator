@@ -1,0 +1,121 @@
+NOTE: this grammar is old an incomplete.
+
+tokens:
+
+"(" ")" " " integer-literal "-" "n" "N" identifier
+entity name attr attribute pk primary-key fk foreign-key
+association between card cardinality
+gerarchy parent child type total partial exclusive overlapped
+subset
+
+grammar:
+
+diagram: ----*----------*-> eof ---> x
+             |          |
+             *-----<----|
+             |          |
+             *->object--*
+
+object: ----> "(" ----*---------------------------------------------------*------> ")" ----> x
+                      |                                                   |
+                      *----> "entity" -> " " ---*----------------*--------*
+                      |                         |                |        |
+                      |                         *--------<-------*        |
+                      |                         |                |        |
+                      |                         * entity-object -*        |
+                      |                                                   |
+                      |                                                   |
+                      *----> "gerarchy" -> " " --*------------------*-----*
+                      |                          |                  |     |
+                      |                          *--------<---------*     |
+                      |                          |                  |     |
+                      |                          * gerarchy-object  *     |
+                      |                                                   |
+                      *----> "association" -> " " --*------------------*--*
+                                                    |                  |
+                                                    *--------<---------*
+                                                    |                  |
+                                                    * -> assoc-object  *
+
+entity-object: ---> "(" ---*--------------------------------------*-----> x
+                           |                                      |
+                           *----> name                        ----*
+                           |                                      |
+                           *----> "attr" -> " " -> identifier ----*
+                           |                                      |
+                           *----> "pk" ---> " " -> identifier ----*
+
+gerarchy-object: --> "(" --*
+                           |
+                           *----> name
+                           |
+                           *----> "type" -> " "
+
+
+diagram: eof
+       | list-of-objects eof
+
+eof: end of file character
+
+list-of-objects: object
+               | list-of-objects object
+
+object: entity
+      | association
+      | gerarchy
+
+entity: "(" "entity" " " entity-fields ")"
+
+entity-fields: name
+             | attr
+             | attribute
+             | pk
+             | fk
+
+name: "(" "name" identifier ")"
+attr: "(" "attr" identifier ")"
+attribute: "(" "attribute" " " identifier ")"
+pk: "(" "pk" identifier ")"
+fk: "(" "fk" list-of-keys ")"
+
+list-of-keys: attr
+            | attribute
+            | assoc-key
+
+assoc-key: "(" "association" identifier ")"
+
+association: "(" "association" " " assoc-fields ")"
+
+assoc-fields: name
+            | between
+            | card
+            | cardinality
+
+between:        "(" "between" " " identifier " " identifier ")"
+card:           "(" "card" " " identifier " " integer-literal " " integer-literal ")"
+cardinality:    "(" "cardinality" " " identifier " " integer-literal " " integer-literal ")"
+
+integer-literal: one of 0 1 2 3 4 5 6 7 8 9
+
+gerarchy: "(" "gerarchy" " " gerarchy-fields ")"
+
+gerarchy-fields: name
+               | type
+               | parent
+               | child
+
+type: "(" "type" coverage overlap ")"
+
+coverage: "partial"
+        | "total"
+
+overlap: "exclusive"
+       | "overlapped"
+
+parent: "(" "parent" identifier ")"
+child: "(" "child" identifier ")"
+
+
+
+
+
