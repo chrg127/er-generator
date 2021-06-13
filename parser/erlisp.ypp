@@ -16,6 +16,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <fmt/core.h>
 #include "util.hpp"
 
 /* the output for this parser is a graph. each graph node has a type, which can be one of:
@@ -24,6 +25,12 @@
  * declarations in a separate file.
  */
 #include "ergraph.hpp"
+
+/* used for defining names and for certain lookups. */
+struct Ident {
+    int id;
+    Node::Type type;
+};
 
 struct LexContext;
 
@@ -46,17 +53,17 @@ struct LexContext;
  * the graph.
  */
 struct LexContext {
-    const char *cursor;
-    yy::location loc;
-
     ERGraph graph;
-    std::vector<std::unordered_map<std::string, int>> scopes;
+    std::vector<std::unordered_map<std::string, Ident>> scopes;
     std::vector<Node> node_stack;
-    std::vector<std::vector<int>> link_stack;
     using syntax_error = yy::ERParser::syntax_error;
     int id = 0;
 
 public:
+
+    const char *cursor;
+    yy::location loc;
+
     /* creates a new node with no links in the current scope.
      * the node is put into an internal stack, and ater a definition, a new scope is created.
      * the next definition of a node will automatically add a link from this node to the next one.
@@ -64,11 +71,11 @@ public:
      */
     void defnode(std::string &&name, Node::Type type)
     {
-        auto r = scopes.back().emplace(name, id);
+        auto r = scopes.back().emplace(name, Ident{id, type});
         if (!r.second)
             throw syntax_error(loc, "duplicate definition of " + name);
         // add link to current node in the stack, then push the new node into the stack
-        addlink(id);
+        this->addlink(id);
         node_stack.push_back({type, std::move(name), {}, id++});
         scopes.push_back({});
     }
@@ -82,52 +89,51 @@ public:
     void add(Node &&node) { graph[node.id] = std::move(node); }
 
     void addlink(int link) { node_stack.back().links.push_back(link); }
-    void addlink(const std::string &name, Node::Type type) { addlink(find_node(name, type).id); }
+    void addlink(const std::string &name, Node::Type type) { addlink(find_node(name, type)); }
 
-    /* get a name for an anonymous node */
+    // get a name for an anonymous node
     template <typename... T>
     std::string anon(const T&... args) { return std::to_string(id) + ":" + util::concat(args...); }
 
-    const Node & find_node(const std::string &name, Node::Type type)
+    const int find_node(const std::string &name, Node::Type type)
     {
-        for (const auto &scope : scopes) {
-            // validate name
-            if (auto i = scope.find(name); i != scope.end()) {
-                // validate type
-                auto n = graph.find(i->second);
-                if (n != graph.end() && n->second.type == type)
-                    return n->second;
-            }
-        }
+        for (const auto &scope : scopes)
+            if (auto i = scope.find(name); i != scope.end() && i->second.type == type)
+                return i->second.id;
         throw syntax_error(loc, "invalid reference for identifier " + name + " for type type");
     }
 
-    // find an attribute inside the current entity
-    // used by pk decls
+    // find an attribute inside the current entity. used by pk decls.
     int find_attr(const std::string &name)
     {
         auto r = scopes.back().find(name);
-        if (r != scopes.back().end())
-            throw syntax_error(loc, "name " + name + "not found in current declaration");
-        return r->second;
+        if (r != scopes.back().end() && r->second.type == Node::Type::ATTR);
+            return r->second.id;
+        throw syntax_error(loc, "invalid reference for identifier " + name + " of type ATTRIBUTE");
     }
 
+    // find attribute attr for entity ent. ent must be in scope, but attr may not be in scope
+    // and we must find it manually through the graph. (we also suppose the entity is already fully declared).
     int find_attr(const std::string &attr, const std::string &ent)
     {
-        auto e = find_node(ent, Node::Type::ENTITY);
-        auto a = graph_find_link(graph, e, attr, Node::Type::ATTR);
-        if (a == e.links.end())
+        auto e = graph.find(find_node(ent, Node::Type::ENTITY));
+        if (e == graph.end())
+            throw syntax_error(loc, "internal parser error");
+        auto a = graph_find_link(graph, e->second, attr, Node::Type::ATTR);
+        if (a == e->second.links.end())
             throw syntax_error(loc, attr + " is not an attribute of entity " + ent);
         return *a;
     }
 };
 
+namespace yy { ERParser::symbol_type yylex(LexContext &ctx); }
+
 #define M(x) std::move(x)
 
 }
 
-%token      end 0
-%token      ENTITY "entity" NAME "name" ATTR "attr" PK "pk" FK "fk" ASSOCIATION "association" BETWEEN "between" CARD "card"
+%token      END 0
+%token      ENTITY "entity" ATTR "attr" PK "pk" FK "fk" ASSOCIATION "association" BETWEEN "between" CARD "card"
 %token      GERARCHY "gerarchy" TYPE "type" PARTIAL "partial" TOTAL "total" EXCLUSIVE "exclusive" OVERLAPPED "overlapped"
 %token      PARENT "parent" CHILD "child"
 %token      IDENTIFIER NUMCONST
@@ -163,7 +169,7 @@ assoc_fields:           assoc_fields assoc_field
 |                       %empty
 ;
 
-assoc_field:            between
+assoc_field:            between                         /* creates links */
 |                       carddecl                        { ctx.add(M($1)); }
 ;
 
@@ -172,15 +178,19 @@ gerarchy_fields:        gerarchy_fields gerarchy_field
 ;
 
 gerarchy_field:         gerarchy_type                   { ctx.add(M($1)); }
-|                       parent
-|                       child;
+|                       parent                          /* creates links */
+|                       child                           /* creates links */
+;
 
 fk_fields:              fk_fields fk_field
-|                       %empty ;
-fk_field:               attrref
-|                       assocref;
+|                       %empty
+;
 
-attrdecl:               "(" attr_keyword IDENTIFIER ")"                     { ctx.defattr(M($3)); $$ = ctx.enddef(); }
+fk_field:               attrref                         /* creates links */
+|                       assocref                        /* creates links */
+;
+
+attrdecl:               "(" "attr" IDENTIFIER ")"                           { ctx.defattr(M($3)); $$ = ctx.enddef(); }
 pkdecl:                 "(" "pk" IDENTIFIER ")"
                         { ctx.defpk(ctx.anon("pk_", $3)); ctx.addlink(ctx.find_attr($3)); $$ = ctx.enddef(); };
 
@@ -188,22 +198,90 @@ between:                "(" "between" IDENTIFIER IDENTIFIER ")"             { ct
 carddecl:               "(" "card" IDENTIFIER NUMCONST NUMCONST ")"
                         { ctx.defcard(ctx.anon($3, "_", $4, "_", $5)); ctx.addlink($3, Node::Type::ENTITY); $$ = ctx.enddef(); };
 
-attrref:                "(" attr_keyword IDENTIFIER IDENTIFIER ")"          { ctx.addlink(ctx.find_attr($3, $4)); };
+attrref:                "(" "attr" IDENTIFIER IDENTIFIER ")"                { ctx.addlink(ctx.find_attr($3, $4)); };
 assocref:               "(" "association" IDENTIFIER ")"                    { ctx.addlink($3, Node::Type::ASSOC); };
 gerarchy_type:          "(" "type" gerarchy_coverage gerarchy_overlap ")"   { ctx.defgertype(ctx.anon("type_", $3, "_", $4)); $$ = ctx.enddef(); };
 parent:                 "(" "parent" IDENTIFIER ")"                         { ctx.addlink($3, Node::Type::ENTITY); };
 child:                  "(" "child" IDENTIFIER ")"                          { ctx.addlink($3, Node::Type::ENTITY); };
 
 gerarchy_coverage:      "partial"   { $$ = "partial"; }
-|                       "total"     { $$ = "total"; };
+|                       "total"     { $$ = "total"; }
 gerarchy_overlap:       "exclusive" { $$ = "exclusive"; }
-|                       "overlapped" { $$ = "overlapped"; };
-attr_keyword:           "attr" | "attribute";
+|                       "overlapped" { $$ = "overlapped"; }
 
 %%
 
-// yy::ERParser::symbol_type yy::yylex(LexContext &ctx)
-// {
-//     return {};
-// }
+yy::ERParser::symbol_type yy::yylex(LexContext &ctx)
+{
+    const char *anchor = ctx.cursor;
+    ctx.loc.step();
+    auto s = [&](auto func, auto&&... params) { ctx.loc.columns(ctx.cursor - anchor); return func(params..., ctx.loc); };
+    const char *YYMARKER;
+
+// begin re2c lexer
+%{
+
+re2c:yyfill:enable   = 0;
+re2c:define:YYCTYPE  = "char";
+re2c:define:YYCURSOR = "ctx.cursor";
+
+// keywords
+"entity"                    { return s(ERParser::make_ENTITY); }
+"attr" | "attribute"        { return s(ERParser::make_ATTR); }
+"pk" | "primary-key"        { return s(ERParser::make_PK); }
+"fk" | "foreign-key"        { return s(ERParser::make_FK); }
+"assoc" | "association"     { return s(ERParser::make_ASSOCIATION); }
+"between"                   { return s(ERParser::make_BETWEEN); }
+"card" | "cardinality"      { return s(ERParser::make_CARD); }
+"gerarchy"                  { return s(ERParser::make_GERARCHY); }
+"type"                      { return s(ERParser::make_TYPE); }
+"partial"                   { return s(ERParser::make_PARTIAL); }
+"total"                     { return s(ERParser::make_TOTAL); }
+"exclusive"                 { return s(ERParser::make_EXCLUSIVE); }
+"overlapped"                { return s(ERParser::make_OVERLAPPED); }
+"parent"                    { return s(ERParser::make_PARENT); }
+"child"                     { return s(ERParser::make_CHILD); }
+
+// identifiers
+[a-zA-Z] [a-zA-Z_0-9]*      { return s(ERParser::make_IDENTIFIER, std::string(anchor, ctx.cursor)); }
+
+// integer-literals (appear in cardinalities)
+[0-9]+                      { return s(ERParser::make_NUMCONST, std::stol(std::string(anchor, ctx.cursor))); }
+
+// whitespace and comments
+"\000"                      { return s(ERParser::make_END); }
+"\r\n" | [\r\n]             { ctx.loc.lines();   return yylex(ctx); }
+";" [^\r\n]*                {                    return yylex(ctx); }
+[\t\v\b\f]                  { ctx.loc.columns(); return yylex(ctx); }
+
+// default
+.                           {
+                                auto f = [](auto... s) { return ERParser::symbol_type(s...); };
+                                return s(f, ERParser::token_type(ctx.cursor[-1] & 0xFF));
+                            }
+%}
+}
+
+void yy::ERParser::error(const location_type &l, const std::string &str)
+{
+    fmt::print(stderr, "{}:{}:{}-{}: {}\n", l.begin.filename ? l.begin.filename->c_str() : "(undefined)",
+                                            l.begin.line, l.begin.column, l.end.column, str);
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc != 2) return 1;
+    std::string filename = argv[1];
+    auto str = util::read_all(argv[1]);
+
+    LexContext ctx;
+    ctx.cursor = str.c_str();
+    ctx.loc.begin.filename = &filename;
+    std::string output = "output.txt";
+    ctx.loc.end.filename = &output;
+
+    yy::ERParser parser{ctx};
+    parser.parse();
+    ERGraph graph = std::move(ctx.graph);
+}
 
