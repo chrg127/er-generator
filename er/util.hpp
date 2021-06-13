@@ -68,7 +68,7 @@ V &map_find(const std::unordered_map<K, V> &map, const K &key)
 }
 */
 
-std::string read_all(const char *pathname)
+inline std::string read_all(const char *pathname)
 {
     std::string str;
     FILE *f = fopen(pathname, "r");

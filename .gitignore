@@ -4,3 +4,5 @@ erlisp
 erlisp.cpp
 erlisp.cpp.re
 a.out
+debug
+release
