@@ -3,6 +3,7 @@ old
 er/parser/erlisp.cpp
 er/parser/erlisp.cpp.re
 er/parser/parser.hpp
+er/parser/location.hh
 a.out
 debug
 release

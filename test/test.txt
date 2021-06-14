@@ -1,3 +1,4 @@
+; declaration of an entity
 (entity utente
     (attr id)
     (attr nome))
@@ -5,6 +6,8 @@
 (entity piano
     (attr data-inizio))
 
+; declaration of an association.
+; you can also use the name 'association' instead of 'assoc'.
 (assoc assoc-utente-piano
     (between utente piano)
     (card utente 1 3)
@@ -13,11 +16,13 @@
 (entity utonto)
 (entity direttore)
 
+; a gerarchy.
 (gerarchy ger-utente
     (parent utente)
     (child utonto)
     (child direttore))
 
+; a foreign key. 'fk' is a synonym.
 (foreign-key fk-utente
     (attr id utente)
-    (association assoc_utente_piano))
+    (association assoc-utente-piano))
