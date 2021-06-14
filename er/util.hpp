@@ -1,7 +1,6 @@
 #ifndef UTIL_HPP_INCLUDED
 #define UTIL_HPP_INCLUDED
 
-#include <cstdio>
 #include <cstring>
 #include <charconv>
 #include <optional>
@@ -67,21 +66,6 @@ V &map_find(const std::unordered_map<K, V> &map, const K &key)
     return it->
 }
 */
-
-inline std::string read_all(const char *pathname)
-{
-    std::string str;
-    FILE *f = fopen(pathname, "r");
-
-    fseek(f, 0L, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0L, SEEK_SET);
-    str.reserve(size);
-    for (int c; c = fgetc(f), c != EOF; )
-        str += c;
-    fclose(f);
-    return str;
-}
 
 // template <typename It>
 // std::string remove_comments(It first, It last)

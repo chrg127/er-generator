@@ -1,8 +1,8 @@
 examples
 old
-erlisp
-erlisp.cpp
-erlisp.cpp.re
+er/parser/erlisp.cpp
+er/parser/erlisp.cpp.re
+er/parser/parser.hpp
 a.out
 debug
 release

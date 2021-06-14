@@ -64,6 +64,12 @@ public:
     const char *cursor;
     yy::location loc;
 
+    void start()
+    {
+        node_stack.push_back({Node::Type::START, "start", {}, id++});
+        scopes.push_back({});
+    }
+
     /* creates a new node with no links in the current scope.
      * the node is put into an internal stack, and ater a definition, a new scope is created.
      * the next definition of a node will automatically add a link from this node to the next one.
@@ -71,6 +77,7 @@ public:
      */
     void defnode(std::string &&name, Node::Type type)
     {
+        // we only search in the current scope for duplicated definitions. this allows shadowing.
         auto r = scopes.back().emplace(name, Ident{id, type});
         if (!r.second)
             throw syntax_error(loc, "duplicate definition of " + name);
@@ -131,8 +138,13 @@ public:
 /* pasted inside the implementation file. */
 %code
 {
-namespace yy { ERParser::symbol_type yylex(LexContext &ctx); }
+namespace yy {
+    /* ERParser::symbol_type do_lex(LexContext &ctx); */
+    ERParser::symbol_type yylex(LexContext &ctx);
+}
+
 #define M(x) std::move(x)
+
 }
 
 %param { LexContext &ctx }
@@ -141,13 +153,14 @@ namespace yy { ERParser::symbol_type yylex(LexContext &ctx); }
 %token      ENTITY "entity" ATTR "attr" PK "pk" FK "fk" ASSOCIATION "association" BETWEEN "between" CARD "card"
 %token      GERARCHY "gerarchy" TYPE "type" PARTIAL "partial" TOTAL "total" EXCLUSIVE "exclusive" OVERLAPPED "overlapped"
 %token      PARENT "parent" CHILD "child"
+%token      PAREN_START "(" PAREN_END ")"
 %token      IDENTIFIER NUMCONST
 %type<int> NUMCONST
 %type<std::string> IDENTIFIER gerarchy_coverage gerarchy_overlap
 %type<Node> er_object entitydecl assocdecl gerarchydecl fkdecl attrdecl pkdecl carddecl gerarchy_type
 %%
 
-diagram:                { ctx.defstart("start"); } er_objects { ctx.add(ctx.enddef()); };
+diagram:                { ctx.start(); } er_objects { ctx.add(ctx.enddef()); };
 
 er_objects:             er_objects er_object { ctx.add(M($2)); }
 |                       %empty;
@@ -248,7 +261,7 @@ re2c:define:YYCURSOR = "ctx.cursor";
 "child"                     { return s(ERParser::make_CHILD); }
 
 // identifiers
-[a-zA-Z] [a-zA-Z_0-9]*      { return s(ERParser::make_IDENTIFIER, std::string(anchor, ctx.cursor)); }
+[a-zA-Z_] [a-zA-Z_0-9-]*     { return s(ERParser::make_IDENTIFIER, std::string(anchor, ctx.cursor)); }
 
 // integer-literals (appear in cardinalities)
 [0-9]+                      { return s(ERParser::make_NUMCONST, std::stol(std::string(anchor, ctx.cursor))); }
@@ -257,10 +270,15 @@ re2c:define:YYCURSOR = "ctx.cursor";
 "\000"                      { return s(ERParser::make_END); }
 "\r\n" | [\r\n]             { ctx.loc.lines();   return yylex(ctx); }
 ";" [^\r\n]*                {                    return yylex(ctx); }
-[\t\v\b\f]                  { ctx.loc.columns(); return yylex(ctx); }
+[\t\v\b\f ]                 { ctx.loc.columns(); return yylex(ctx); }
+
+// parenthesis
+"("                         { return s(ERParser::make_PAREN_START); }
+")"                         { return s(ERParser::make_PAREN_END); }
 
 // default
 .                           {
+                                /* return s(ERParser::make_YYerror); */
                                 auto f = [](auto... s) { return ERParser::symbol_type(s...); };
                                 return s(f, ERParser::token_type(ctx.cursor[-1] & 0xFF));
                             }

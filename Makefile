@@ -4,13 +4,13 @@ parserdir := er/parser
 _objs := parser.o main.o
 objs := $(patsubst %,$(outdir)/%,$(_objs))
 CXX := g++
-CXXFLAGS := -std=c++20 -I.
+CXXFLAGS := -std=c++20 -I. -g
 libs := -lfmt
 flags_deps = -MMD -MP -MF $(@:.o=.d)
 
-all: erlisp
+all: $(outdir)/erlisp
 
-erlisp: $(outdir) $(objs)
+$(outdir)/erlisp: $(outdir) $(objs)
 	$(info Linking $@ ...)
 	$(CXX) $(objs) -o $@ $(libs)
 
@@ -23,13 +23,15 @@ $(parserdir)/parser.hpp: $(parserdir)/erlisp.ypp
 	$(info Using bison on $< ...)
 	@bison $< --defines=$(parserdir)/parser.hpp -o $(parserdir)/erlisp.cpp.re
 
-er/parser/erlisp.cpp.re: er/parser/erlisp.ypp
+$(parserdir)/erlisp.cpp.re: er/parser/erlisp.ypp
 	$(info Using bison on $< ...)
 	@bison $< --defines=$(parserdir)/parser.hpp -o $(parserdir)/erlisp.cpp.re
 
-$(outdir)/parser.o: $(parserdir)/erlisp.cpp.re
+$(parserdir)/erlisp.cpp: $(parserdir)/erlisp.cpp.re
 	$(info Using re2c on $< ...)
 	@re2c $< -o $(parserdir)/erlisp.cpp
+
+$(outdir)/parser.o: $(parserdir)/erlisp.cpp
 	$(info Compiling $(parserdir)/erlisp.cpp ...)
 	@$(CXX) $(CXXFLAGS) $(flags_deps) -c er/parser/erlisp.cpp -o $@
 
@@ -43,4 +45,5 @@ clean:
 	rm -rf $(outdir)
 	rm $(parserdir)/erlisp.cpp.re
 	rm $(parserdir)/erlisp.cpp
+	rm $(parserdir)/parser.hpp
 

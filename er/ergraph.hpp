@@ -9,7 +9,6 @@
 #include <optional>
 
 #define NODE_TYPES(O) \
-    O(START, start) \
     O(ENTITY, ent) \
     O(ASSOC, assoc) \
     O(GERARCHY, ger) \
@@ -21,6 +20,7 @@
 
 struct Node {
     enum class Type {
+        START,
 #define O(ename, sname) ename,
         NODE_TYPES(O)
 #undef O
