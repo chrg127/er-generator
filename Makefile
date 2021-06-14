@@ -46,4 +46,5 @@ clean:
 	rm $(parserdir)/erlisp.cpp.re
 	rm $(parserdir)/erlisp.cpp
 	rm $(parserdir)/parser.hpp
+	rm $(parserdir)/location.hh
 
