@@ -1,4 +1,4 @@
-NOTE: this grammar is old an incomplete.
+NOTE: this grammar is old and incomplete.
 
 tokens:
 
