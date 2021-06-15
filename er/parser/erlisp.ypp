@@ -21,13 +21,14 @@
 #include <fmt/core.h>
 #include <er/util.hpp>
 
-/* the output for this parser is a graph. each graph node has a type, which can be one of:
- * entity, association, gerarchy and foreign key.
- * since we will operate on the graph later in this program, we must keep declarations in a separate file.
+/* the output for this parser is a graph. each graph node has a type,
+ * which can be one of: entity, association, gerarchy and foreign key.
+ * since we will operate on the graph later in this program, we must keep
+ * declarations in a separate file.
  */
-#include <er/ergraph.hpp>
+#include <er/graph.hpp>
 
-/* used for defining names and for certain lookups. */
+/* used for defining names and for quickly finding type in name lookups. */
 struct Ident {
     int id;
     Node::Type type;
@@ -41,40 +42,41 @@ struct LexContext;
 %code provides
 {
 
-/* "nearly all parsers need a context"
+namespace yy { ERParser::symbol_type yylex(LexContext &ctx); }
+
+/*
+ * "nearly all parsers need a context"
  * this context deals with names and the entity graph.
- * we keep a list of scopes. any time anything is declared (entity, attribute,
- * assoc, etc.), its name is put into the current scope. before defining a new name,
- * we must search through all scopes to make sure it wasn't defined before.
- * when an object is fully declared, we simply insert it into the graph. for 'object',
- * we mean anything that is declard in the outer scope (so, no attributes or primary keys).
- * references to other objects, such as those found in (foreign-key) declarations,
- * can't be resolved through this method and must be resolved be manually searching
- * the graph.
+ * when the start of a new node is encountered, its name and type is
+ * installed into a new scope, then a new scope is created and a new node
+ * is installed into the node stack. when declaring a new node, a link to
+ * the new object is put inside the links of the current node in the stack,
+ * before a new node is created.
+ * when the declaration of a node is finished, the current scope is
+ * destroyed and the node stack returns the node that was just declared.
+ * the returned node is then added into the graph.
+ * we keep links using an id. any time a new node is created, the id
+ * increases.
  */
-struct LexContext {
+class LexContext {
+    const char *cursor;
+    yy::location loc;
     ERGraph graph;
     std::vector<std::unordered_map<std::string, Ident>> scopes;
     std::vector<Node> node_stack;
-    using syntax_error = yy::ERParser::syntax_error;
     int id = 0;
 
+    using syntax_error = yy::ERParser::syntax_error;
+
 public:
-
-    const char *cursor;
-    yy::location loc;
-
-    void start()
+    explicit LexContext(const std::string &infile, const std::string &outfile, const std::string &contents)
     {
-        node_stack.push_back({Node::Type::START, "start", {}, id++});
-        scopes.push_back({});
+        cursor = contents.c_str();
+        loc.begin.filename = &infile;
+        loc.end.filename = &outfile;
     }
 
-    /* creates a new node with no links in the current scope.
-     * the node is put into an internal stack, and ater a definition, a new scope is created.
-     * the next definition of a node will automatically add a link from this node to the next one.
-     * to get the node and remove it from the stack, we must call enddef().
-     */
+    // define a new node. the node is put into the stack, and has no links.
     void defnode(std::string &&name, Node::Type type)
     {
         // we only search in the current scope for duplicated definitions. this allows shadowing.
@@ -92,6 +94,8 @@ public:
     NODE_TYPES(O)
 #undef O
 
+    void start() { node_stack.push_back({Node::Type::START, "start", {}, id++}); scopes.push_back({}); }
+
     Node enddef() { scopes.pop_back(); Node n = std::move(node_stack.back()); node_stack.pop_back(); return n; }
     void add(Node &&node) { graph[node.id] = std::move(node); }
 
@@ -100,12 +104,15 @@ public:
 
     // get a name for an anonymous node
     template <typename... T>
-    std::string anon(const T&... args) { return std::to_string(id) + ":" + util::concat(args...); }
+    std::string anon(const T&... args) { return std::to_string(id) + "_" + util::concat(args...); }
 
-    const int find_node(const std::string &name, Node::Type type)
+    // define the current node into the stack as an anonymous node
+    void defanon() { node_stack.back().anonymous = true; }
+
+    int find_node(const std::string &name, Node::Type type)
     {
-        for (const auto &scope : scopes)
-            if (auto i = scope.find(name); i != scope.end() && i->second.type == type)
+        for (auto scope = scopes.crbegin(); scope != scopes.crend(); ++scope)
+            if (auto i = scope->find(name); i != scope->end() && i->second.type == type)
                 return i->second.id;
         throw syntax_error(loc, "invalid reference for identifier " + name + " for type type");
     }
@@ -114,7 +121,7 @@ public:
     int find_attr(const std::string &name)
     {
         auto r = scopes.back().find(name);
-        if (r != scopes.back().end() && r->second.type == Node::Type::ATTR);
+        if (r != scopes.back().end() && r->second.type == Node::Type::ATTR)
             return r->second.id;
         throw syntax_error(loc, "invalid reference for identifier " + name + " of type ATTRIBUTE");
     }
@@ -131,6 +138,10 @@ public:
             throw syntax_error(loc, attr + " is not an attribute of entity " + ent);
         return *a;
     }
+
+    ERGraph getgraph() { return graph; }
+
+    friend yy::ERParser::symbol_type yy::yylex(LexContext &ctx);
 };
 
 }
@@ -138,13 +149,7 @@ public:
 /* pasted inside the implementation file. */
 %code
 {
-namespace yy {
-    /* ERParser::symbol_type do_lex(LexContext &ctx); */
-    ERParser::symbol_type yylex(LexContext &ctx);
-}
-
 #define M(x) std::move(x)
-
 }
 
 %param { LexContext &ctx }
@@ -163,12 +168,14 @@ namespace yy {
 diagram:                { ctx.start(); } er_objects { ctx.add(ctx.enddef()); };
 
 er_objects:             er_objects er_object { ctx.add(M($2)); }
-|                       %empty;
+|                       %empty
+;
 
 er_object:              entitydecl
 |                       assocdecl
 |                       gerarchydecl
-|                       fkdecl;
+|                       fkdecl
+;
 
 entitydecl:             "(" "entity"      IDENTIFIER { ctx.defent(M($3)); }   entity_fields ")"   { $$ = ctx.enddef(); };
 assocdecl:              "(" "association" IDENTIFIER { ctx.defassoc(M($3)); } assoc_fields  ")"   { $$ = ctx.enddef(); };
@@ -210,22 +217,36 @@ fk_field:               attrref                         /* creates links */
 
 attrdecl:               "(" "attr" IDENTIFIER ")"                           { ctx.defattr(M($3)); $$ = ctx.enddef(); }
 pkdecl:                 "(" "pk" IDENTIFIER ")"
-                        { ctx.defpk(ctx.anon("pk_", $3)); ctx.addlink(ctx.find_attr($3)); $$ = ctx.enddef(); };
+                        {
+                            int link = ctx.find_attr($3);
+                            ctx.defpk(ctx.anon("pk_", $3));
+                            ctx.defanon();
+                            ctx.addlink(link);
+                            $$ = ctx.enddef();
+                        };
 
 between:                "(" "between" IDENTIFIER IDENTIFIER ")"             { ctx.addlink($3, Node::Type::ENTITY); ctx.addlink($4, Node::Type::ENTITY); };
 carddecl:               "(" "card" IDENTIFIER NUMCONST NUMCONST ")"
-                        { ctx.defcard(ctx.anon($3, "_", $4, "_", $5)); ctx.addlink($3, Node::Type::ENTITY); $$ = ctx.enddef(); };
+                        {
+                            ctx.defcard(ctx.anon("card_", $3, "_", $4, "_", $5));
+                            ctx.defanon();
+                            ctx.addlink($3, Node::Type::ENTITY);
+                            $$ = ctx.enddef();
+                        };
 
 attrref:                "(" "attr" IDENTIFIER IDENTIFIER ")"                { ctx.addlink(ctx.find_attr($3, $4)); };
 assocref:               "(" "association" IDENTIFIER ")"                    { ctx.addlink($3, Node::Type::ASSOC); };
-gerarchy_type:          "(" "type" gerarchy_coverage gerarchy_overlap ")"   { ctx.defgertype(ctx.anon("type_", $3, "_", $4)); $$ = ctx.enddef(); };
+gerarchy_type:          "(" "type" gerarchy_coverage gerarchy_overlap ")"   { ctx.defgertype(ctx.anon("type_", $3, "_", $4)); ctx.defanon(); $$ = ctx.enddef(); };
 parent:                 "(" "parent" IDENTIFIER ")"                         { ctx.addlink($3, Node::Type::ENTITY); };
 child:                  "(" "child" IDENTIFIER ")"                          { ctx.addlink($3, Node::Type::ENTITY); };
 
 gerarchy_coverage:      "partial"   { $$ = "partial"; }
 |                       "total"     { $$ = "total"; }
+;
+
 gerarchy_overlap:       "exclusive" { $$ = "exclusive"; }
 |                       "overlapped" { $$ = "overlapped"; }
+;
 
 %%
 
@@ -234,7 +255,6 @@ yy::ERParser::symbol_type yy::yylex(LexContext &ctx)
     const char *anchor = ctx.cursor;
     ctx.loc.step();
     auto s = [&](auto func, auto&&... params) { ctx.loc.columns(ctx.cursor - anchor); return func(params..., ctx.loc); };
-    const char *YYMARKER;
 
 // begin re2c lexer
 %{

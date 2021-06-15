@@ -1,10 +1,10 @@
 VPATH=er:er/parser
 outdir := debug
 parserdir := er/parser
-_objs := parser.o main.o
+_objs := parser.o main.o graph.o
 objs := $(patsubst %,$(outdir)/%,$(_objs))
 CXX := g++
-CXXFLAGS := -std=c++20 -I. -g
+CXXFLAGS := -std=c++20 -I. -g -Wall -Wextra -pedantic
 libs := -lfmt
 flags_deps = -MMD -MP -MF $(@:.o=.d)
 

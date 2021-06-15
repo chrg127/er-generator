@@ -2,11 +2,8 @@
 #define ERGRAPH_HPP_INCLUDED
 
 #include <string>
-#include <utility>
 #include <unordered_map>
-#include <variant>
 #include <vector>
-#include <optional>
 
 #define NODE_TYPES(O) \
     O(ENTITY, ent) \
@@ -28,6 +25,7 @@ struct Node {
     std::string name;
     std::vector<int> links;
     int id;
+    bool anonymous = false;
 };
 
 using ERGraph = std::unordered_map<int, Node>;
@@ -48,6 +46,9 @@ graph_find_link(const ERGraph &graph, const Node &node, const std::string &name,
     });
     return r;
 }
+
+void graph_print(const ERGraph &graph);
+std::string node_str(Node::Type type);
 
 #endif
 

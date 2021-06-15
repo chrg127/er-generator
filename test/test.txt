@@ -1,7 +1,8 @@
 ; declaration of an entity
 (entity utente
     (attr id)
-    (attr nome))
+    (attr nome)
+    (pk id))
 
 (entity piano
     (attr data-inizio))
