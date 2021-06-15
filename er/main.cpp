@@ -1,7 +1,7 @@
 #include <cstdio>
 #include <string>
 #include <fmt/core.h>
-#include <er/ergraph.hpp>
+#include <er/graph.hpp>
 #include <er/parser/parser.hpp>
 
 inline std::string read_all(const char *pathname)
@@ -26,14 +26,10 @@ inline std::string read_all(const char *pathname)
 
 ERGraph parse_file(const std::string &infile, const std::string &outfile, const std::string &contents)
 {
-    LexContext ctx;
-    ctx.cursor = contents.c_str();
-    ctx.loc.begin.filename = &infile;
-    ctx.loc.end.filename = &outfile;
-
+    LexContext ctx{ infile, outfile, contents };
     yy::ERParser parser{ctx};
     parser.parse();
-    return ctx.graph;
+    return ctx.getgraph();
 }
 
 int main(int argc, char *argv[])
@@ -48,11 +44,6 @@ int main(int argc, char *argv[])
     std::string filename = argv[1];
     std::string output = "output.txt";
     ERGraph graph = parse_file(filename, output, contents);
-    for (const auto &p : graph) {
-        fmt::print("id: {} name: {} links: ", p.second.id, p.second.name);
-        for (int link : p.second.links)
-            fmt::print("{} ", link);
-        fmt::print("\n");
-    }
+    graph_print(graph);
 }
 
