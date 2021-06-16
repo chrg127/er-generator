@@ -20,6 +20,7 @@
 #include <vector>
 #include <fmt/core.h>
 #include <er/util.hpp>
+#include <er/nodeprops.hpp>
 
 /* the output for this parser is a graph. each graph node has a type,
  * which can be one of: entity, association, gerarchy and foreign key.
@@ -114,13 +115,13 @@ public:
         for (auto scope = scopes.crbegin(); scope != scopes.crend(); ++scope)
             if (auto i = scope->find(name); i != scope->end() && i->second.type == type)
                 return i->second.id;
-        throw syntax_error(loc, "invalid reference for identifier " + name + " for type type");
+        throw syntax_error(loc, "invalid reference for identifier " + name + " for type " + node_str(type));
     }
 
-    // find an attribute inside the current entity. used by pk decls.
-    int find_attr(const std::string &name)
+    // find an attribute inside the current entity. used by pk declarations.
+    int find_attr_outer_scope(const std::string &name)
     {
-        auto r = scopes.back().find(name);
+        auto r = scopes[scopes.size()-2].find(name);
         if (r != scopes.back().end() && r->second.type == Node::Type::ATTR)
             return r->second.id;
         throw syntax_error(loc, "invalid reference for identifier " + name + " of type ATTRIBUTE");
@@ -159,9 +160,9 @@ public:
 %token      GERARCHY "gerarchy" TYPE "type" PARTIAL "partial" TOTAL "total" EXCLUSIVE "exclusive" OVERLAPPED "overlapped"
 %token      PARENT "parent" CHILD "child"
 %token      PAREN_START "(" PAREN_END ")"
-%token      IDENTIFIER NUMCONST
-%type<int> NUMCONST
+%token      IDENTIFIER CARDVALUE
 %type<std::string> IDENTIFIER gerarchy_coverage gerarchy_overlap
+%type<Cardinality> CARDVALUE
 %type<Node> er_object entitydecl assocdecl gerarchydecl fkdecl attrdecl pkdecl carddecl gerarchy_type
 %%
 
@@ -215,20 +216,26 @@ fk_field:               attrref                         /* creates links */
 |                       assocref                        /* creates links */
 ;
 
-attrdecl:               "(" "attr" IDENTIFIER ")"                           { ctx.defattr(M($3)); $$ = ctx.enddef(); }
-pkdecl:                 "(" "pk" IDENTIFIER ")"
-                        {
-                            int link = ctx.find_attr($3);
-                            ctx.defpk(ctx.anon("pk_", $3));
-                            ctx.defanon();
-                            ctx.addlink(link);
-                            $$ = ctx.enddef();
-                        };
+attrdecl:               "(" "attr" IDENTIFIER { ctx.defattr(M($3)); } attr_fields ")" { $$ = ctx.enddef(); } ;
+
+attr_fields:            attr_fields attr_field
+|                       %empty
+;
+
+attr_field:             attrdecl                        { ctx.add(M($1)); }
+|                       carddecl                        { ctx.add(M($1)); }
+;
+
+pkdecl:                 "(" "pk" { ctx.defpk(ctx.anon("pk")); ctx.defanon(); } pkidentlist ")" { $$ = ctx.enddef(); }
+
+pkidentlist:            pkidentlist IDENTIFIER          { ctx.addlink(ctx.find_attr_outer_scope($2)); }
+|                       IDENTIFIER                      { ctx.addlink(ctx.find_attr_outer_scope($1)); }
+;
 
 between:                "(" "between" IDENTIFIER IDENTIFIER ")"             { ctx.addlink($3, Node::Type::ENTITY); ctx.addlink($4, Node::Type::ENTITY); };
-carddecl:               "(" "card" IDENTIFIER NUMCONST NUMCONST ")"
+carddecl:               "(" "card" IDENTIFIER CARDVALUE ")"
                         {
-                            ctx.defcard(ctx.anon("card_", $3, "_", $4, "_", $5));
+                            ctx.defcard(ctx.anon("card_", $3, "_", $4.first.to_string(), "_", $4.second.to_string()));
                             ctx.defanon();
                             ctx.addlink($3, Node::Type::ENTITY);
                             $$ = ctx.enddef();
@@ -255,6 +262,7 @@ yy::ERParser::symbol_type yy::yylex(LexContext &ctx)
     const char *anchor = ctx.cursor;
     ctx.loc.step();
     auto s = [&](auto func, auto&&... params) { ctx.loc.columns(ctx.cursor - anchor); return func(params..., ctx.loc); };
+    const char *YYMARKER;
 
 // begin re2c lexer
 %{
@@ -283,8 +291,8 @@ re2c:define:YYCURSOR = "ctx.cursor";
 // identifiers
 [a-zA-Z_] [a-zA-Z_0-9-]*     { return s(ERParser::make_IDENTIFIER, std::string(anchor, ctx.cursor)); }
 
-// integer-literals (appear in cardinalities)
-[0-9]+                      { return s(ERParser::make_NUMCONST, std::stol(std::string(anchor, ctx.cursor))); }
+// cardinality syntax. accepts anything that looks like 0:1, N:N, etc.
+([nN]|[0-9]+)":"([nN]|[0-9]+) { return s(ERParser::make_CARDVALUE, make_card_value(std::string(anchor, ctx.cursor))); }
 
 // whitespace and comments
 "\000"                      { return s(ERParser::make_END); }

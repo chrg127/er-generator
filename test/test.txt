@@ -2,7 +2,8 @@
 (entity utente
     (attr id)
     (attr nome)
-    (pk id))
+    (attr codice-fiscale)
+    (pk id nome codice-fiscale))
 
 (entity piano
     (attr data-inizio))
@@ -11,8 +12,8 @@
 ; you can also use the name 'association' instead of 'assoc'.
 (assoc assoc-utente-piano
     (between utente piano)
-    (card utente 1 3)
-    (card piano 2 3))
+    (card utente 1:N)
+    (card piano N:N))
 
 (entity utonto)
 (entity direttore)
@@ -27,3 +28,9 @@
 (foreign-key fk-utente
     (attr id utente)
     (association assoc-utente-piano))
+
+(entity vg-multiplayer
+    (attr numero-giocatori
+        (attr minimo)
+        (attr massimo)))
+
