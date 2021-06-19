@@ -18,48 +18,68 @@ static int longest_name_width()
     return max->size();
 }
 
-static void print_additional_info(const Node &node)
+int links_text_width(const auto &links)
 {
-    switch (node.type) {
-    case Node::Type::CARD:
-        fmt::print("    cardinality values: {}:{}",
-                   node.info.card.first.to_string(),
-                   node.info.card.second.to_string());
-        break;
-    case Node::Type::GERARCHY:
-        fmt::print("    gerarchy type: {}", gerarchy_type_to_string(node.info.gertype));
-        break;
-    default:
-        break;
-    }
-}
+    if (links.empty())
+        return 4; // "None"
+    int w = 0;
+    for (int x : links)
+        w += 2 + std::to_string(x).size();
+    return w;
+};
 
 void graph_print(const Graph &graph)
 {
-    const auto max_width = std::max_element(graph.begin(), graph.end(), [](const auto &p, const auto &q) {
+    const auto format_links = [](const std::vector<int> &links)
+    {
+        if (links.empty())
+            return std::string("None");
+        std::string str;
+        str.reserve(links_text_width(links));
+        for (std::size_t i = 0; i < links.size() - 1; i++)
+            str += fmt::format("{}, ", links[i]);
+        return str + fmt::format("{}", links[links.size()-1]);
+    };
+
+    const auto format_info = [](const Node &node) -> std::string
+    {
+        switch (node.type) {
+        case Node::Type::CARD:
+            return fmt::format("Cardinality values: {}:{}",
+                       node.info.card.first.to_string(),
+                       node.info.card.second.to_string());
+            break;
+        case Node::Type::GERARCHY:
+            return fmt::format("Gerarchy type: {}", gerarchy_type_to_string(node.info.gertype));
+        default:
+            return "None";
+        }
+    };
+
+    const auto max_link_width = [](const Graph &graph)
+    {
+        auto it = std::max_element(graph.begin(), graph.end(), [&](const auto &p, const auto &q) {
+            return links_text_width(p.second.links) < links_text_width(q.second.links);
+        });
+        return links_text_width(it->second.links) + 2;
+    };
+
+    int name_width = std::max_element(graph.begin(), graph.end(), [](const auto &p, const auto &q) {
         return p.second.name.size() < q.second.name.size();
     })->second.name.size();
-    const auto max_type_width = longest_name_width();
-    // const auto max_links_width = std::max_element(graph.begin(), graph.end(), [](const auto &p, const auto &q) {
-    //     return p.second.links.size(), < q.second.links.size();
-    // })->second.links.size();
+    int type_width = longest_name_width();
+    int links_width = max_link_width(graph);
 
-    fmt::print("{:3} {:{}} {:{}} links\n", "id", "name", max_width, "type", max_type_width);
+    fmt::print("{:3} {:{}} {:{}} Anonymous? {:{}} Additional information\n",
+               "ID", "Name", name_width, "Type", type_width, "Links", links_width);
     for (const auto &p : graph) {
-        fmt::print("{: 3} {:{}} {:{}} [",
+        fmt::print("{:3} {:{}} {:{}} {:10} {:{}} {}\n",
                    p.second.id,
-                   p.second.name, max_width,
-                   node_type_str(p.second.type), max_type_width);
-        if (p.second.links.empty())
-            fmt::print("None");
-        else {
-            for (std::size_t i = 0; i < p.second.links.size() - 1; i++)
-                fmt::print("{}, ", p.second.links[i]);
-            fmt::print("{}", p.second.links[p.second.links.size()-1]);
-        }
-        fmt::print("]");
-        print_additional_info(p.second);
-        fmt::print("\n");
+                   p.second.name, name_width,
+                   node_type_str(p.second.type), type_width,
+                   p.second.anonymous ? "yes" : "no",
+                   "[" + format_links(p.second.links) + "]", links_width,
+                   format_info(p.second));
     }
 }
 
