@@ -32,7 +32,7 @@
 /* used for defining names and for quickly finding type in name lookups. */
 struct Ident {
     int id;
-    Node::Type type;
+    ER::Node::Type type;
 };
 
 struct LexContext;
@@ -62,9 +62,9 @@ namespace yy { ERParser::symbol_type yylex(LexContext &ctx); }
 class LexContext {
     const char *cursor;
     yy::location loc;
-    ERGraph graph;
+    ER::Graph graph;
     std::vector<std::unordered_map<std::string, Ident>> scopes;
-    std::vector<Node> node_stack;
+    std::vector<ER::Node> node_stack;
     int id = 0;
 
     using syntax_error = yy::ERParser::syntax_error;
@@ -78,51 +78,73 @@ public:
     }
 
     // define a new node. the node is put into the stack, and has no links.
-    void defnode(std::string &&name, Node::Type type)
+    void defnode(std::string &&name, ER::Node::Type type)
     {
         // we only search in the current scope for duplicated definitions. this allows shadowing.
         auto r = scopes.back().emplace(name, Ident{id, type});
         if (!r.second)
             throw syntax_error(loc, "duplicate definition of " + name);
         // add link to current node in the stack, then push the new node into the stack
-        this->addlink(id);
+        addlink(id);
         node_stack.push_back({type, std::move(name), {}, id++});
         scopes.push_back({});
     }
 
-#define O(ename, sname) \
-    void def##sname(std::string &&name) { defnode(std::move(name), Node::Type::ename); }
-    NODE_TYPES(O)
-#undef O
-
-    void start() { node_stack.push_back({Node::Type::START, "start", {}, id++}); scopes.push_back({}); }
-
-    Node enddef() { scopes.pop_back(); Node n = std::move(node_stack.back()); node_stack.pop_back(); return n; }
-    void add(Node &&node) { graph[node.id] = std::move(node); }
-
-    void addlink(int link) { node_stack.back().links.push_back(link); }
-    void addlink(const std::string &name, Node::Type type) { addlink(find_node(name, type)); }
+    // define a node of type "START". it's only used to start adding nodes.
+    void start() { node_stack.push_back({ER::Node::Type::START, "start", {}, id++}); scopes.push_back({}); }
 
     // get a name for an anonymous node
     template <typename... T>
     std::string anon(const T&... args) { return std::to_string(id) + "_" + util::concat(args...); }
 
-    // define the current node into the stack as an anonymous node
+    // these functions define properties for the current node on the stack
     void defanon() { node_stack.back().anonymous = true; }
+    void defgertype(ER::GerType type) { node_stack.back().info.gertype = type; }
 
-    int find_node(const std::string &name, Node::Type type)
+    void addlink(int link) { node_stack.back().links.push_back(link); }
+    void addlink(const std::string &name, ER::Node::Type type) { addlink(find_node(name, type)); }
+
+    // helpers for creating nodes.
+#define O(ename, sname) \
+    void def##sname(std::string &&name) { defnode(std::move(name), ER::Node::Type::ename); }
+    O(ENTITY, ent)
+    O(ASSOC, assoc)
+    O(GERARCHY, ger)
+    O(ATTR, attr)
+    O(FK, fk)
+#undef O
+
+    void defpk() { defnode(anon("pk"), ER::Node::Type::PK); defanon(); }
+    void defcard(ER::Cardinality card)
+    {
+        defnode(anon("card_", card.first.to_string(), "_", card.second.to_string()), ER::Node::Type::CARD);
+        node_stack.back().info.card = card;
+        defanon();
+    }
+
+    ER::Node enddef()
+    {
+        scopes.pop_back();
+        ER::Node n = std::move(node_stack.back());
+        node_stack.pop_back();
+        return n;
+    }
+
+    void add(ER::Node &&node) { graph[node.id] = std::move(node); }
+
+    int find_node(const std::string &name, ER::Node::Type type)
     {
         for (auto scope = scopes.crbegin(); scope != scopes.crend(); ++scope)
             if (auto i = scope->find(name); i != scope->end() && i->second.type == type)
                 return i->second.id;
-        throw syntax_error(loc, "invalid reference for identifier " + name + " for type " + node_str(type));
+        throw syntax_error(loc, "invalid reference for identifier " + name + " for type " + ER::node_type_str(type));
     }
 
     // find an attribute inside the current entity. used by pk declarations.
     int find_attr_outer_scope(const std::string &name)
     {
         auto r = scopes[scopes.size()-2].find(name);
-        if (r != scopes.back().end() && r->second.type == Node::Type::ATTR)
+        if (r != scopes.back().end() && r->second.type == ER::Node::Type::ATTR)
             return r->second.id;
         throw syntax_error(loc, "invalid reference for identifier " + name + " of type ATTRIBUTE");
     }
@@ -131,16 +153,16 @@ public:
     // and we must find it manually through the graph. (we also suppose the entity is already fully declared).
     int find_attr(const std::string &attr, const std::string &ent)
     {
-        auto e = graph.find(find_node(ent, Node::Type::ENTITY));
+        auto e = graph.find(find_node(ent, ER::Node::Type::ENTITY));
         if (e == graph.end())
             throw syntax_error(loc, "internal parser error");
-        auto a = graph_find_link(graph, e->second, attr, Node::Type::ATTR);
+        auto a = graph_find_link(graph, e->second, attr, ER::Node::Type::ATTR);
         if (a == e->second.links.end())
             throw syntax_error(loc, attr + " is not an attribute of entity " + ent);
         return *a;
     }
 
-    ERGraph getgraph() { return graph; }
+    ER::Graph getgraph() { return graph; }
 
     friend yy::ERParser::symbol_type yy::yylex(LexContext &ctx);
 };
@@ -150,6 +172,7 @@ public:
 /* pasted inside the implementation file. */
 %code
 {
+using namespace ER;
 #define M(x) std::move(x)
 }
 
@@ -157,13 +180,15 @@ public:
 
 %token      END 0
 %token      ENTITY "entity" ATTR "attr" PK "pk" FK "fk" ASSOCIATION "association" BETWEEN "between" CARD "card"
-%token      GERARCHY "gerarchy" TYPE "type" PARTIAL "partial" TOTAL "total" EXCLUSIVE "exclusive" OVERLAPPED "overlapped"
+%token      GERARCHY "gerarchy" TYPE "type" SUBSET "subset" PARTIAL "partial" TOTAL "total" EXCLUSIVE "exclusive" OVERLAPPED "overlapped"
 %token      PARENT "parent" CHILD "child"
 %token      PAREN_START "(" PAREN_END ")"
 %token      IDENTIFIER CARDVALUE
-%type<std::string> IDENTIFIER gerarchy_coverage gerarchy_overlap
-%type<Cardinality> CARDVALUE
-%type<Node> er_object entitydecl assocdecl gerarchydecl fkdecl attrdecl pkdecl carddecl gerarchy_type
+%type<std::string> IDENTIFIER
+%type<ER::Node> er_object entitydecl assocdecl gerarchydecl fkdecl attrdecl pkdecl assoc_entityref
+%type<ER::CardValue> CARDVALUE
+%type<ER::GerType> gerarchy_type
+%type<bool> gerarchy_coverage gerarchy_overlap
 %%
 
 diagram:                { ctx.start(); } er_objects { ctx.add(ctx.enddef()); };
@@ -178,10 +203,7 @@ er_object:              entitydecl
 |                       fkdecl
 ;
 
-entitydecl:             "(" "entity"      IDENTIFIER { ctx.defent(M($3)); }   entity_fields ")"   { $$ = ctx.enddef(); };
-assocdecl:              "(" "association" IDENTIFIER { ctx.defassoc(M($3)); } assoc_fields  ")"   { $$ = ctx.enddef(); };
-gerarchydecl:           "(" "gerarchy"    IDENTIFIER { ctx.defger(M($3)); }   gerarchy_fields ")" { $$ = ctx.enddef(); };
-fkdecl:                 "(" "fk"          IDENTIFIER { ctx.deffk(M($3)); }    fk_fields ")"       { $$ = ctx.enddef(); };
+entitydecl:             "(" "entity"      IDENTIFIER { ctx.defent(M($3)); }   entity_fields ")"     { $$ = ctx.enddef(); };
 
 entity_fields:          entity_fields entity_field
 |                       %empty
@@ -191,22 +213,20 @@ entity_field:           attrdecl                        { ctx.add(M($1)); }
 |                       pkdecl                          { ctx.add(M($1)); }
 ;
 
+assocdecl:              "(" "association" IDENTIFIER { ctx.defassoc(M($3)); } assoc_fields  ")"     { $$ = ctx.enddef(); }
+|                       "(" "association" { ctx.defassoc(ctx.anon("assoc")); ctx.defanon(); } assoc_fields ")" { $$ = ctx.enddef(); }
+;
+
 assoc_fields:           assoc_fields assoc_field
 |                       %empty
 ;
 
-assoc_field:            between                         /* creates links */
-|                       carddecl                        { ctx.add(M($1)); }
+assoc_field:            assoc_entityref                 { ctx.add(M($1)); }
+|                       attrdecl                        { ctx.add(M($1)); }
 ;
 
-gerarchy_fields:        gerarchy_fields gerarchy_field
-|                       %empty
-;
-
-gerarchy_field:         gerarchy_type                   { ctx.add(M($1)); }
-|                       parent                          /* creates links */
-|                       child                           /* creates links */
-;
+fkdecl:                 "(" "fk"          IDENTIFIER { ctx.deffk(M($3)); }     fk_fields ")"        { $$ = ctx.enddef(); }
+|                       "(" "fk" { ctx.deffk(ctx.anon("fk")); ctx.defanon(); } fk_fields ")"        { $$ = ctx.enddef(); }
 
 fk_fields:              fk_fields fk_field
 |                       %empty
@@ -214,46 +234,64 @@ fk_fields:              fk_fields fk_field
 
 fk_field:               attrref                         /* creates links */
 |                       assocref                        /* creates links */
+|                       entityref                       /* creates links */
 ;
 
-attrdecl:               "(" "attr" IDENTIFIER { ctx.defattr(M($3)); } attr_fields ")" { $$ = ctx.enddef(); } ;
+gerarchydecl:           "(" "gerarchy"    IDENTIFIER { ctx.defger(M($3)); } gerarchy_type gerarchy_fields ")" { $$ = ctx.enddef(); }
+|                       "(" "gerarchy" { ctx.defger(ctx.anon("gerarchy")); ctx.defanon(); } gerarchy_type gerarchy_fields ")" { $$ = ctx.enddef(); }
+;
 
-attr_fields:            attr_fields attr_field
+gerarchy_fields:        gerarchy_fields gerarchy_field
 |                       %empty
 ;
 
-attr_field:             attrdecl                        { ctx.add(M($1)); }
-|                       carddecl                        { ctx.add(M($1)); }
+gerarchy_field:         parent                          /* creates links */
+|                       child                           /* creates links */
 ;
 
-pkdecl:                 "(" "pk" { ctx.defpk(ctx.anon("pk")); ctx.defanon(); } pkidentlist ")" { $$ = ctx.enddef(); }
-
-pkidentlist:            pkidentlist IDENTIFIER          { ctx.addlink(ctx.find_attr_outer_scope($2)); }
-|                       IDENTIFIER                      { ctx.addlink(ctx.find_attr_outer_scope($1)); }
-;
-
-between:                "(" "between" IDENTIFIER IDENTIFIER ")"             { ctx.addlink($3, Node::Type::ENTITY); ctx.addlink($4, Node::Type::ENTITY); };
-carddecl:               "(" "card" IDENTIFIER CARDVALUE ")"
+attrdecl:               "(" "attr" IDENTIFIER { ctx.defattr(M($3)); } attr_fields ")" { $$ = ctx.enddef(); } ;
+attrdecl:               "(" "attr" IDENTIFIER { ctx.defattr(M($3)); } CARDVALUE CARDVALUE attr_fields ")"
                         {
-                            ctx.defcard(ctx.anon("card_", $3, "_", $4.first.to_string(), "_", $4.second.to_string()));
-                            ctx.defanon();
+                            auto a1 = $5; auto a2 = $6;
+                            ctx.defcard({a1, a2});
+                            ctx.add(ctx.enddef());
+                            $$ = ctx.enddef();
+                        }
+
+attr_fields:            attr_fields attrdecl                                { ctx.add(M($2)); }
+|                       %empty
+;
+
+pkdecl:                 "(" "pk" { ctx.defpk(); } pkidentlist ")" { $$ = ctx.enddef(); }
+
+pkidentlist:            pkidentlist IDENTIFIER                              { ctx.addlink(ctx.find_attr_outer_scope($2)); }
+|                       IDENTIFIER                                          { ctx.addlink(ctx.find_attr_outer_scope($1)); }
+;
+
+gerarchy_type:          "subset"                                            { ctx.defgertype(make_gerarchy_subset()); }
+|                       gerarchy_coverage gerarchy_overlap                  { ctx.defgertype(make_gerarchy_type($1, $2)); }
+;
+
+gerarchy_coverage:      "total"                                             { $$ = true; }
+|                       "partial"                                           { $$ = false; }
+;
+
+gerarchy_overlap:       "exclusive"                                         { $$ = true; }
+|                       "overlapped"                                        { $$ = false; }
+;
+
+assoc_entityref:        "(" "entity" IDENTIFIER CARDVALUE CARDVALUE ")"
+                        {
+                            ctx.defcard({$4, $5});
                             ctx.addlink($3, Node::Type::ENTITY);
                             $$ = ctx.enddef();
                         };
 
 attrref:                "(" "attr" IDENTIFIER IDENTIFIER ")"                { ctx.addlink(ctx.find_attr($3, $4)); };
 assocref:               "(" "association" IDENTIFIER ")"                    { ctx.addlink($3, Node::Type::ASSOC); };
-gerarchy_type:          "(" "type" gerarchy_coverage gerarchy_overlap ")"   { ctx.defgertype(ctx.anon("type_", $3, "_", $4)); ctx.defanon(); $$ = ctx.enddef(); };
+entityref:              "(" "entity" IDENTIFIER ")"                         { ctx.addlink($3, Node::Type::ENTITY); };
 parent:                 "(" "parent" IDENTIFIER ")"                         { ctx.addlink($3, Node::Type::ENTITY); };
 child:                  "(" "child" IDENTIFIER ")"                          { ctx.addlink($3, Node::Type::ENTITY); };
-
-gerarchy_coverage:      "partial"   { $$ = "partial"; }
-|                       "total"     { $$ = "total"; }
-;
-
-gerarchy_overlap:       "exclusive" { $$ = "exclusive"; }
-|                       "overlapped" { $$ = "overlapped"; }
-;
 
 %%
 
@@ -262,7 +300,6 @@ yy::ERParser::symbol_type yy::yylex(LexContext &ctx)
     const char *anchor = ctx.cursor;
     ctx.loc.step();
     auto s = [&](auto func, auto&&... params) { ctx.loc.columns(ctx.cursor - anchor); return func(params..., ctx.loc); };
-    const char *YYMARKER;
 
 // begin re2c lexer
 %{
@@ -281,6 +318,7 @@ re2c:define:YYCURSOR = "ctx.cursor";
 "card" | "cardinality"      { return s(ERParser::make_CARD); }
 "gerarchy"                  { return s(ERParser::make_GERARCHY); }
 "type"                      { return s(ERParser::make_TYPE); }
+"subset"                    { return s(ERParser::make_SUBSET); }
 "partial"                   { return s(ERParser::make_PARTIAL); }
 "total"                     { return s(ERParser::make_TOTAL); }
 "exclusive"                 { return s(ERParser::make_EXCLUSIVE); }
@@ -288,11 +326,8 @@ re2c:define:YYCURSOR = "ctx.cursor";
 "parent"                    { return s(ERParser::make_PARENT); }
 "child"                     { return s(ERParser::make_CHILD); }
 
-// identifiers
-[a-zA-Z_] [a-zA-Z_0-9-]*     { return s(ERParser::make_IDENTIFIER, std::string(anchor, ctx.cursor)); }
-
 // cardinality syntax. accepts anything that looks like 0:1, N:N, etc.
-([nN]|[0-9]+)":"([nN]|[0-9]+) { return s(ERParser::make_CARDVALUE, make_card_value(std::string(anchor, ctx.cursor))); }
+[nN]|[0-9]+                 { return s(ERParser::make_CARDVALUE, CardValue::from_string(std::string(anchor, ctx.cursor)).value()); }
 
 // whitespace and comments
 "\000"                      { return s(ERParser::make_END); }
@@ -303,6 +338,9 @@ re2c:define:YYCURSOR = "ctx.cursor";
 // parenthesis
 "("                         { return s(ERParser::make_PAREN_START); }
 ")"                         { return s(ERParser::make_PAREN_END); }
+
+// identifiers
+[a-zA-Z_] [a-zA-Z_0-9-]*     { return s(ERParser::make_IDENTIFIER, std::string(anchor, ctx.cursor)); }
 
 // default
 .                           {

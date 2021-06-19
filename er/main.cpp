@@ -4,6 +4,8 @@
 #include <er/graph.hpp>
 #include <er/parser/parser.hpp>
 
+using namespace ER;
+
 inline std::string read_all(const char *pathname)
 {
     std::string str;
@@ -24,7 +26,7 @@ inline std::string read_all(const char *pathname)
     return str;
 }
 
-ERGraph parse_file(const std::string &infile, const std::string &outfile, const std::string &contents)
+Graph parse_file(const std::string &infile, const std::string &outfile, const std::string &contents)
 {
     LexContext ctx{ infile, outfile, contents };
     yy::ERParser parser{ctx};
@@ -43,7 +45,7 @@ int main(int argc, char *argv[])
         return 1;
     std::string filename = argv[1];
     std::string output = "output.txt";
-    ERGraph graph = parse_file(filename, output, contents);
+    Graph graph = parse_file(filename, output, contents);
     graph_print(graph);
 }
 

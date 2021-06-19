@@ -1,0 +1,1 @@
+(entity nano (attr nome 0 1))

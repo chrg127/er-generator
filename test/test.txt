@@ -3,6 +3,7 @@
     (attr id)
     (attr nome)
     (attr codice-fiscale)
+    (attr telefono 0 1)
     (pk id nome codice-fiscale))
 
 (entity piano
@@ -10,16 +11,15 @@
 
 ; declaration of an association.
 ; you can also use the name 'association' instead of 'assoc'.
-(assoc assoc-utente-piano
-    (between utente piano)
-    (card utente 1:N)
-    (card piano N:N))
+(assoc stipulazione
+    (entity utente 0 N)
+    (entity piano N N))
 
 (entity utonto)
 (entity direttore)
 
 ; a gerarchy.
-(gerarchy ger-utente
+(gerarchy ger-utente total exclusive
     (parent utente)
     (child utonto)
     (child direttore))
@@ -27,7 +27,7 @@
 ; a foreign key. 'fk' is a synonym.
 (foreign-key fk-utente
     (attr id utente)
-    (association assoc-utente-piano))
+    (association stipulazione))
 
 (entity vg-multiplayer
     (attr numero-giocatori

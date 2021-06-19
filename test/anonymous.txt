@@ -1,0 +1,8 @@
+(entity e1 (attr id))
+(entity e2)
+(assoc (entity e1 0 1) (entity e2 0 N))
+(entity e3)
+(gerarchy subset (parent e1) (child e3))
+(entity e4)
+(assoc an-assoc (entity e1 0 1) (entity e4 1 N))
+(fk (attr id e1) (assoc an-assoc))
