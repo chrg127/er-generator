@@ -9,7 +9,7 @@ std::optional<Graph> Parser::parse()
     nodes.push(Node{Node::Type::Start, id++, "start", {}, std::nullopt, std::nullopt});
     scopes.push_back({});
     advance();
-    while (!at_end())
+    while (!lexer->at_end())
         top_level();
     if (had_error)
         return std::nullopt;
@@ -21,9 +21,10 @@ void Parser::advance()
 {
     prev = cur;
     Token t;
-    while (t = next_token(), t.type == Error) {
+    while (t = lexer->lex_one(), t.type == Error) {
         auto [line, col] = lexer->position_of(t);
         fmt::print(stderr, "{}:{}: parse error: {}\n", line, col, t.text);
+        had_error = true;
     }
     cur = t;
     switch (prev.type) {
@@ -74,9 +75,9 @@ void Parser::sync()
 
 void Parser::push_node(Node::Type type, std::string_view name)
 {
-    auto r = scopes.back().emplace(name, Identifier{id, type});
+    auto r = curr_scope().emplace(Identifier{type, name}, id);
     if (!r.second)
-        error(fmt::format("duplicate definition of {}", name));
+        error(fmt::format("duplicate definition of {} of type {}", name, node_type_to_string(type)));
     add_link(id);
     nodes.push(Node{type, id++, std::string{name}, {}, std::nullopt, std::nullopt});
     scopes.push_back({});
@@ -85,16 +86,14 @@ void Parser::push_node(Node::Type type, std::string_view name)
 void Parser::pop_node()
 {
     scopes.pop_back();
-    auto node = nodes.top();
-    graph[node.id] = node;
+    graph[nodes.top().id] = std::move(nodes.top());
     nodes.pop();
 }
 
 int Parser::find_name_in(const auto &scope, std::string_view name, Node::Type type)
 {
-    if (auto i = scope.find(name); i != scope.end() && i->second.type == type)
-        return i->second.id;
-    return -1;
+    auto i = scope.find(Identifier{type, name});
+    return i != scope.end() ? i->second : -1;
 }
 
 int Parser::find_name(std::string_view name, Node::Type type)
@@ -102,7 +101,7 @@ int Parser::find_name(std::string_view name, Node::Type type)
     for (auto scope = scopes.crbegin(); scope != scopes.crend(); ++scope)
         if (int id = find_name_in(*scope, name, type); id != -1)
             return id;
-    error(fmt::format("invalid reference for identifier {} for type {}", name, node_type_to_string(type)));
+    error(fmt::format("invalid reference for identifier {} of type {}", name, node_type_to_string(type)));
 }
 
 int Parser::find_attr(int entity_id, std::string_view name)
@@ -114,6 +113,11 @@ int Parser::find_attr(int entity_id, std::string_view name)
             return id;
     }
     error(fmt::format("identifier {} not found", name));
+}
+
+bool Parser::find_type_in(const auto &scope, Node::Type type)
+{
+    return std::find_if(scope.begin(), scope.end(), [&](const auto &obj) { return obj.first.type == type; }) != scope.end();
 }
 
 static const std::vector<Parser::Field> fields_tab[] = {
@@ -163,15 +167,20 @@ void Parser::top_level()
 void Parser::entity()       { parse_object(Node::Type::Entity,   "entity",      1, [](){}); }
 void Parser::association()  { parse_object(Node::Type::Assoc,    "association", 2, [](){}); }
 void Parser::gerarchy()     { parse_object(Node::Type::Gerarchy, "gerarchy",    3, [&](){ curr().gerarchy_type = gerarchy_type(); }); }
-void Parser::foreign_key()  { parse_object(Node::Type::FK,       "foreign_key", 4, [](){}); }
-void Parser::attr()         { parse_object(Node::Type::Attr,     "attribute",   5, [&](){ if (check(Card)) { advance(); cardinality(); } }); }
+void Parser::foreign_key()  { parse_object(Node::Type::FK,       "foreign key", 4, [](){}); }
+void Parser::attr()         { parse_object(Node::Type::Attr,     "attribute",   5, [&](){ if (check(Card)) {
+                                                                                              advance();
+                                                                                              curr().cardinality = cardinality();
+                                                                                          } }); }
 
 void Parser::primary_key()
 {
     std::vector<int> links;
+    if (find_type_in(curr_scope(), Node::Type::PK))
+        error("can't have multiple primary-key fields in entity object");
     while (!check(RightParen) && !check(End)) {
         consume(Ident, "expected identifier");
-        links.push_back(find_name_in(scopes.back(), prev.text, Node::Type::Attr));
+        links.push_back(find_name_in(curr_scope(), prev.text, Node::Type::Attr));
     }
     consume(RightParen, "expected right paren");
     push_node(Node::Type::PK, anonymous_name("pk"));
@@ -185,27 +194,10 @@ void Parser::assoc_branch()
     int id = find_name(prev.text, Node::Type::Entity);
     consume(Card, "expected cardinality value");
     push_node(Node::Type::Card, anonymous_name("card"));
-    cardinality();
+    curr().cardinality = cardinality();
     add_link(id);
     pop_node();
     consume(RightParen, "expected right paren");
-}
-
-GerarchyType Parser::gerarchy_type()
-{
-    if (check(Subset)) {
-        advance();
-        return make_gerarchy_subset();
-    }
-    advance();
-    auto t1 = prev.type;
-    if (t1 != Total && t1 != Partial)
-        error("expected type 'subset', 'total' or 'exclusive' for gerarchy");
-    advance();
-    auto t2 = prev.type;
-    if (t2 != Exclusive && t2 != Overlapped)
-        error("expected type 'exclusive' or 'overlapped' for gerarchy");
-    return make_gerarchy_type(t1 == Total, t2 == Exclusive);
 }
 
 void Parser::reference_of(Node::Type type)
@@ -224,10 +216,27 @@ void Parser::attr_ref()
     consume(RightParen, "expected right paren");
 }
 
-void Parser::cardinality()
+Cardinality Parser::cardinality()
 {
     auto v1 = CardinalityValue::from_string(prev.text).value();
     consume(Card, "expected cardinality value");
     auto v2 = CardinalityValue::from_string(prev.text).value();
-    nodes.top().cardinality = std::make_pair(v1, v2);
+    return std::make_pair(v1, v2);
+}
+
+GerarchyType Parser::gerarchy_type()
+{
+    if (check(Subset)) {
+        advance();
+        return make_gerarchy_subset();
+    }
+    advance();
+    auto t1 = prev.type;
+    if (t1 != Total && t1 != Partial)
+        error("expected type 'subset', 'total' or 'exclusive' for gerarchy");
+    advance();
+    auto t2 = prev.type;
+    if (t2 != Exclusive && t2 != Overlapped)
+        error("expected type 'exclusive' or 'overlapped' for gerarchy");
+    return make_gerarchy_type(t1 == Total, t2 == Exclusive);
 }
