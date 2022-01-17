@@ -51,6 +51,7 @@ public:
     void error(std::string_view msg)      { error_at(prev, msg); }
     void error_curr(std::string_view msg) { error_at(cur,  msg); }
 
+    Node & add_node(Node::Type type, std::vector<int> &&links);
     void push_node(Node::Type type, std::string_view name);
     void pop_node();
     int find_name_in(const auto &scope, std::string_view name, Node::Type type);
@@ -60,7 +61,6 @@ public:
     Node & curr()                                   { return nodes.top(); }
     auto & curr_scope()                             { return scopes.back(); }
     void add_link(int id)                           { curr().links.push_back(id); }
-    std::string anonymous_name(const auto&... args) { return std::to_string(id) + "_" + concat(args...); }
 
     void parse_field(const auto &fields);
     void parse_object(Node::Type type, std::string_view name, int fields_index, auto &&other_fields);

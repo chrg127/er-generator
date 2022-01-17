@@ -72,6 +72,12 @@ struct Node {
     std::vector<int> links;
     std::optional<Cardinality> cardinality;
     std::optional<GerarchyType> gerarchy_type;
+
+    Node() = default;
+    Node(Node::Type t, int i, std::string_view n, std::vector<int> &&l)
+        : type(t), id(i), name(std::string{n}), links(std::move(l)),
+          cardinality(std::nullopt), gerarchy_type(std::nullopt)
+    { }
 };
 
 std::string node_type_to_string(Node::Type type);

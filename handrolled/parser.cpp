@@ -6,7 +6,7 @@ using enum Token::Type;
 
 std::optional<Graph> Parser::parse()
 {
-    nodes.push(Node{Node::Type::Start, id++, "start", {}, std::nullopt, std::nullopt});
+    nodes.push(Node{Node::Type::Start, id++, "start", {}});
     scopes.push_back({});
     advance();
     while (!lexer->at_end())
@@ -79,7 +79,7 @@ void Parser::push_node(Node::Type type, std::string_view name)
     if (!r.second)
         error(fmt::format("duplicate definition of {} of type {}", name, node_type_to_string(type)));
     add_link(id);
-    nodes.push(Node{type, id++, std::string{name}, {}, std::nullopt, std::nullopt});
+    nodes.push(Node{type, id++, name, {}});
     scopes.push_back({});
 }
 
@@ -173,6 +173,14 @@ void Parser::attr()         { parse_object(Node::Type::Attr,     "attribute",   
                                                                                               curr().cardinality = cardinality();
                                                                                           } }); }
 
+Node & Parser::add_node(Node::Type type, std::vector<int> &&links)
+{
+    add_link(id);
+    auto it = graph.insert(std::make_pair(id, Node{type, id, "", std::move(links)}));
+    id++;
+    return it.first->second;
+}
+
 void Parser::primary_key()
 {
     std::vector<int> links;
@@ -183,9 +191,7 @@ void Parser::primary_key()
         links.push_back(find_name_in(curr_scope(), prev.text, Node::Type::Attr));
     }
     consume(RightParen, "expected right paren");
-    push_node(Node::Type::PK, anonymous_name("pk"));
-    curr().links = std::move(links);
-    pop_node();
+    add_node(Node::Type::PK, std::move(links));
 }
 
 void Parser::assoc_branch()
@@ -193,10 +199,8 @@ void Parser::assoc_branch()
     consume(Ident, "expected identifier");
     int id = find_name(prev.text, Node::Type::Entity);
     consume(Card, "expected cardinality value");
-    push_node(Node::Type::Card, anonymous_name("card"));
-    curr().cardinality = cardinality();
-    add_link(id);
-    pop_node();
+    auto &node = add_node(Node::Type::Card, std::vector<int>{id});
+    node.cardinality = cardinality();
     consume(RightParen, "expected right paren");
 }
 
